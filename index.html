@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Turnout Tracker – Advanced PPE Cleaning</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .toast { animation: slideUp 0.3s ease-out; }
+    @keyframes slideUp {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .nav-btn:not(.bg-blue-600):hover {
+      opacity: 0.8;
+    }
+    button:not(.nav-btn):hover {
+      opacity: 0.9;
+    }
+  </style>
+</head>
+
+<body class="bg-gray-50 min-h-screen flex flex-col">
+  <!-- Header -->
+  <header class="bg-gray-800 text-white shadow-lg p-4">
+    <div class="flex justify-between items-center mb-3">
+      <div>
+        <h1 class="text-xl font-bold">Turnout Tracker</h1>
+        <p class="text-sm text-gray-300">Advanced Cleaning & PPE Inspection Log</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="syncStatus" class="text-sm px-3 py-1 rounded bg-gray-700">Syncing...</span>
+      </div>
+    </div>
+    
+    <!-- Navigation -->
+    <div class="flex gap-2">
+      <button class="nav-btn bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition" data-page="search">Search</button>
+      <button class="nav-btn bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition" data-page="add">Add Item</button>
+      <button class="nav-btn bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition" data-page="stats">Logs & Stats</button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main id="main-content" class="flex-1 p-6 overflow-auto"></main>
+
+  <!-- Toast Notifications -->
+  <div id="toast-area" class="fixed right-6 bottom-6 space-y-2 z-50"></div>
+
+  <script>
+    const DB_URL = 'https://tpusa-chatgpt-edition-default-rtdb.firebaseio.com/logs.json';
+    
+    let items = [];
+    let currentPage = 'search';
+    let selectedItem = null;
+    let searchResults = [];
+    const main = document.getElementById('main-content');
+    const toastArea = document.getElementById('toast-area');
+    const syncStatus = document.getElementById('syncStatus');
+
+    // Navigation
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        currentPage = btn.dataset.page;
+        selectedItem = null;
+        searchResults = [];
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('bg-blue-600'));
+        btn.classList.add('bg-blue-600');
+        renderPage();
+      });
+    });
+
+    // ================================
+    // Render Pages
+    // ================================
+    function renderPage() {
+      switch (currentPage) {
+        case 'add':
+          renderAddPage();
+          break;
+        case 'stats':
+          renderStatsPage();
+          break;
+        default:
+          renderSearchPage();
+      }
+    }
+
+    // --------------------- Search Page
+    function renderSearchPage() {
+      if (selectedItem) {
+        renderLogActivityPage();
+        return;
+      }
+
+      if (searchResults.length > 0) {
+        renderSearchResults();
+        return;
+      }
+
+      main.innerHTML = `
+        <div class="max-w-2xl mx-auto">
+          <h2 class="text-3xl font-bold mb-2 text-gray-800">Search for Item</h2>
+          <p class="text-gray-600 mb-6">Enter Name or Serial Number</p>
+          <form id="searchForm" class="flex gap-3">
+            <input id="searchInput" type="text" placeholder="Search..." 
+              class="border-2 border-gray-300 rounded-lg flex-1 p-3 text-lg focus:border-blue-500 focus:outline-none bg-white text-gray-800" required />
+            <button type="submit" class="bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 transition font-semibold">Search</button>
+          </form>
+        </div>
+      `;
+
+      document.getElementById('searchForm').addEventListener('submit', e => {
+        e.preventDefault();
+        const term = document.getElementById('searchInput').value.toLowerCase().trim();
+        if (!term) return;
+        
+        searchResults = items.filter(item =>
+          item.name.toLowerCase().includes(term) ||
+          item.serial.toLowerCase().includes(term)
+        );
+        
+        renderSearchResults();
+      });
+    }
+
+    function renderSearchResults() {
+      main.innerHTML = `
+        <div class="max-w-3xl mx-auto">
+          <h2 class="text-2xl font-bold mb-6 text-gray-800">Select an Item</h2>
+          <div id="results" class="space-y-3 mb-6"></div>
+          <button id="backBtn" class="bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition">Back to Search</button>
+        </div>
+      `;
+
+      const results = document.getElementById('results');
+      
+      if (searchResults.length === 0) {
+        results.innerHTML = `
+          <div class="bg-white p-8 rounded-lg border text-center">
+            <p class="text-gray-600 mb-4">No items found matching your search.</p>
+            <button id="addNewItemBtn" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:opacity-90 transition font-semibold">Add New Item</button>
+          </div>
+        `;
+        
+        document.getElementById('addNewItemBtn').addEventListener('click', () => {
+          searchResults = [];
+          currentPage = 'add';
+          document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('bg-blue-600'));
+          document.querySelector('.nav-btn[data-page="add"]').classList.add('bg-blue-600');
+          renderPage();
+        });
+      } else {
+        results.innerHTML = searchResults.map((item, idx) => `
+          <div class="bg-white p-4 border border-gray-200 rounded-lg shadow-sm hover:shadow-md hover:border-blue-400 transition cursor-pointer" data-idx="${idx}">
+            <div class="font-semibold text-lg text-gray-800">${item.name}</div>
+            <div class="grid grid-cols-3 gap-2 mt-2 text-sm">
+              <div><span class="text-gray-500">Serial:</span> <span class="font-medium">${item.serial}</span></div>
+              <div><span class="text-gray-500">Type:</span> <span class="font-medium">${item.type}</span></div>
+              <div><span class="text-gray-500">Model:</span> <span class="font-medium">${item.model || 'N/A'}</span></div>
+            </div>
+          </div>
+        `).join('');
+
+        results.querySelectorAll('[data-idx]').forEach(el => {
+          el.addEventListener('click', () => {
+            selectedItem = searchResults[parseInt(el.dataset.idx)];
+            renderLogActivityPage();
+          });
+        });
+      }
+
+      document.getElementById('backBtn').addEventListener('click', () => {
+        searchResults = [];
+        renderSearchPage();
+      });
+    }
+
+    function renderLogActivityPage() {
+      const lastCleaned = getLastActivity(selectedItem, 'cleaning');
+      const lastInspected = getLastActivity(selectedItem, 'inspection');
+
+      main.innerHTML = `
+        <div class="max-w-2xl mx-auto">
+          <h2 class="text-3xl font-bold mb-6 text-gray-800">Log Activity</h2>
+          <div class="bg-white p-6 rounded-lg shadow-md space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-500 mb-1">Firefighter</label>
+              <div class="text-lg font-semibold text-gray-800">${selectedItem.name}</div>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-500 mb-1">Item Type</label>
+              <div class="text-lg font-semibold text-gray-800">${selectedItem.type}</div>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-500 mb-1">Serial Number</label>
+              <div class="text-lg font-semibold text-gray-800">${selectedItem.serial}</div>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-500 mb-1">Model</label>
+              <div class="text-lg font-semibold text-gray-800">${selectedItem.model || 'N/A'}</div>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-500 mb-1">Last Cleaned</label>
+                <div class="text-lg font-semibold text-gray-800">${lastCleaned}</div>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-500 mb-1">Last Inspected</label>
+                <div class="text-lg font-semibold text-gray-800">${lastInspected}</div>
+              </div>
+            </div>
+            
+            <form id="logForm" class="pt-4 border-t">
+              <label class="block text-sm font-medium text-gray-700 mb-3">Select Activity</label>
+              <div class="space-y-2 mb-4">
+                <label class="flex items-center space-x-3 cursor-pointer">
+                  <input type="checkbox" name="cleaning" class="w-5 h-5" />
+                  <span class="text-gray-700">Advanced Cleaning</span>
+                </label>
+                <label class="flex items-center space-x-3 cursor-pointer">
+                  <input type="checkbox" name="inspection" class="w-5 h-5" />
+                  <span class="text-gray-700">Advanced Inspection</span>
+                </label>
+              </div>
+              <div class="flex gap-3">
+                <button type="button" id="cancelBtn" class="flex-1 bg-gray-600 text-white px-6 py-3 rounded-lg hover:bg-gray-700 transition font-semibold">Cancel</button>
+                <button type="submit" class="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-semibold">Submit Log</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('cancelBtn').addEventListener('click', () => {
+        selectedItem = null;
+        renderSearchResults();
+      });
+
+      document.getElementById('logForm').addEventListener('submit', e => {
+        e.preventDefault();
+        const form = e.target;
+        const cleaning = form.cleaning.checked;
+        const inspection = form.inspection.checked;
+
+        if (!cleaning && !inspection) {
+          showToast('Please select at least one activity', 'warning');
+          return;
+        }
+
+        if (!selectedItem.activities) {
+          selectedItem.activities = [];
+        }
+
+        const activity = {
+          date: new Date().toLocaleDateString(),
+          timestamp: Date.now(),
+          cleaning: cleaning,
+          inspection: inspection
+        };
+
+        selectedItem.activities.push(activity);
+        
+        // Find and update the actual item in the items array
+        const itemIndex = items.findIndex(item => item.id === selectedItem.id);
+        if (itemIndex !== -1) {
+          items[itemIndex] = selectedItem;
+        }
+        
+        saveToFirebaseWithFeedback();
+        
+        selectedItem = null;
+        searchResults = [];
+        currentPage = 'search';
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('bg-blue-600'));
+        document.querySelector('.nav-btn[data-page="search"]').classList.add('bg-blue-600');
+        renderSearchPage();
+      });
+    }
+
+    function getLastActivity(item, type) {
+      if (!item.activities || item.activities.length === 0) {
+        return 'Never';
+      }
+      
+      const filtered = item.activities.filter(a => a[type]);
+      if (filtered.length === 0) return 'Never';
+      
+      const last = filtered.sort((a, b) => b.timestamp - a.timestamp)[0];
+      return last.date;
+    }
+
+    // --------------------- Add Item
+    function renderAddPage() {
+      main.innerHTML = `
+        <div class="max-w-2xl mx-auto">
+          <h2 class="text-3xl font-bold mb-6 text-gray-800">Add New Item</h2>
+          <form id="addForm" class="space-y-4 bg-white p-6 rounded-lg shadow-md">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Firefighter Name <span class="text-red-500">*</span></label>
+              <input name="name" type="text" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none bg-white text-gray-800" required />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Serial Number <span class="text-red-500">*</span></label>
+              <input name="serial" type="text" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none bg-white text-gray-800" required />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Item Type <span class="text-red-500">*</span></label>
+              <select name="type" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none bg-white text-gray-800" required>
+                <option value="" class="text-gray-800">Select item type</option>
+                <option value="Helmet" class="text-gray-800">Helmet</option>
+                <option value="Coat" class="text-gray-800">Coat</option>
+                <option value="Pants" class="text-gray-800">Pants</option>
+                <option value="Boots" class="text-gray-800">Boots</option>
+                <option value="Gloves" class="text-gray-800">Gloves</option>
+                <option value="Hood" class="text-gray-800">Hood</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Model Number</label>
+              <input name="model" type="text" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none bg-white text-gray-800" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Manufacture Date</label>
+              <input name="manufactureDate" type="date" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none bg-white text-gray-800" />
+            </div>
+            
+            <div class="pt-4 border-t">
+              <label class="block text-sm font-medium text-gray-700 mb-3">Today's Activity</label>
+              <div class="space-y-2">
+                <label class="flex items-center space-x-3 cursor-pointer">
+                  <input type="checkbox" name="cleaning" class="w-5 h-5" />
+                  <span class="text-gray-700">Advanced Cleaning</span>
+                </label>
+                <label class="flex items-center space-x-3 cursor-pointer">
+                  <input type="checkbox" name="inspection" class="w-5 h-5" />
+                  <span class="text-gray-700">Advanced Inspection</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="flex gap-3 pt-4">
+              <button type="button" id="cancelAddBtn" class="flex-1 bg-gray-600 text-white px-6 py-3 rounded-lg hover:bg-gray-700 transition font-semibold">Cancel</button>
+              <button type="submit" class="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-semibold">Create & Log</button>
+            </div>
+          </form>
+        </div>
+      `;
+
+      document.getElementById('cancelAddBtn').addEventListener('click', () => {
+        currentPage = 'search';
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('bg-blue-600'));
+        document.querySelector('.nav-btn[data-page="search"]').classList.add('bg-blue-600');
+        renderPage();
+      });
+
+      document.getElementById('addForm').addEventListener('submit', e => {
+        e.preventDefault();
+        const form = e.target;
+        
+        const newItem = {
+          id: Date.now().toString(),
+          name: form.name.value.trim(),
+          serial: form.serial.value.trim(),
+          type: form.type.value,
+          model: form.model.value.trim() || '',
+          manufactureDate: form.manufactureDate.value || '',
+          activities: [],
+          createdAt: Date.now()
+        };
+
+        // Add initial activity if selected
+        if (form.cleaning.checked || form.inspection.checked) {
+          newItem.activities.push({
+            date: new Date().toLocaleDateString(),
+            timestamp: Date.now(),
+            cleaning: form.cleaning.checked,
+            inspection: form.inspection.checked
+          });
+        }
+
+        items.push(newItem);
+        form.reset();
+        saveToFirebaseWithFeedback();
+        
+        // Go back to search page
+        currentPage = 'search';
+        searchResults = [];
+        selectedItem = null;
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('bg-blue-600'));
+        document.querySelector('.nav-btn[data-page="search"]').classList.add('bg-blue-600');
+        renderSearchPage();
+      });
+    }
+
+    // --------------------- Stats & Logs Page
+    function renderStatsPage() {
+      main.innerHTML = `
+        <div class="max-w-7xl mx-auto">
+          <h2 class="text-3xl font-bold mb-6 text-gray-800">Statistics & Logs</h2>
+          
+          <!-- Stats Section -->
+          <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+            <div class="flex justify-between items-center mb-4">
+              <h3 class="text-xl font-semibold text-gray-800">Activity Summary</h3>
+              <button id="exportStats" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition">Export Stats</button>
+            </div>
+            <canvas id="chart" width="400" height="150"></canvas>
+          </div>
+
+          <!-- Logs Section -->
+          <div class="bg-white rounded-lg shadow-md">
+            <div class="p-6 border-b flex justify-between items-center">
+              <h3 class="text-xl font-semibold text-gray-800">All Activity Logs</h3>
+              <button id="exportLogs" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition">Export Logs</button>
+            </div>
+            <div class="overflow-auto">
+              <table class="min-w-full text-sm">
+                <thead class="bg-gray-100 text-left">
+                  <tr>
+                    <th class="p-3 font-semibold">Date</th>
+                    <th class="p-3 font-semibold">Name</th>
+                    <th class="p-3 font-semibold">Type</th>
+                    <th class="p-3 font-semibold">Serial</th>
+                    <th class="p-3 font-semibold">Model</th>
+                    <th class="p-3 font-semibold text-center">Cleaning</th>
+                    <th class="p-3 font-semibold text-center">Inspection</th>
+                  </tr>
+                </thead>
+                <tbody id="logBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // Render chart
+      const ctx = document.getElementById('chart').getContext('2d');
+      const activityCounts = {
+        'Cleanings': 0,
+        'Inspections': 0
+      };
+      
+      items.forEach(item => {
+        if (item.activities) {
+          item.activities.forEach(a => {
+            if (a.cleaning) activityCounts['Cleanings']++;
+            if (a.inspection) activityCounts['Inspections']++;
+          });
+        }
+      });
+      
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(activityCounts),
+          datasets: [{
+            label: 'Total Count',
+            data: Object.values(activityCounts),
+            backgroundColor: ['#3b82f6', '#10b981']
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+
+      // Render logs table - show ALL activities
+      const logBody = document.getElementById('logBody');
+      const allActivities = [];
+      
+      // Collect all activities from all items
+      items.forEach(item => {
+        if (item.activities && item.activities.length > 0) {
+          item.activities.forEach(activity => {
+            allActivities.push({
+              ...activity,
+              name: item.name,
+              type: item.type,
+              serial: item.serial,
+              model: item.model
+            });
+          });
+        }
+      });
+      
+      // Sort by timestamp (newest first)
+      allActivities.sort((a, b) => b.timestamp - a.timestamp);
+      
+      logBody.innerHTML = allActivities.map(log => `
+        <tr class="border-t hover:bg-gray-50">
+          <td class="p-3">${log.date}</td>
+          <td class="p-3">${log.name}</td>
+          <td class="p-3">${log.type}</td>
+          <td class="p-3">${log.serial}</td>
+          <td class="p-3">${log.model || 'N/A'}</td>
+          <td class="p-3 text-center">${log.cleaning ? '<span class="text-green-600 font-bold">✓</span>' : '<span class="text-gray-400">—</span>'}</td>
+          <td class="p-3 text-center">${log.inspection ? '<span class="text-green-600 font-bold">✓</span>' : '<span class="text-gray-400">—</span>'}</td>
+        </tr>
+      `).join('');
+
+      // Export buttons
+      document.getElementById('exportStats').addEventListener('click', exportStatsToExcel);
+      document.getElementById('exportLogs').addEventListener('click', exportLogsToExcel);
+    }
+
+    // ================================
+    // Excel Export Functions
+    // ================================
+    function exportStatsToExcel() {
+      const data = items.map(item => {
+        const cleanings = item.activities ? item.activities.filter(a => a.cleaning).length : 0;
+        const inspections = item.activities ? item.activities.filter(a => a.inspection).length : 0;
+        return {
+          'Firefighter Name': item.name,
+          'Item Type': item.type,
+          'Serial': item.serial,
+          'Total Cleanings': cleanings,
+          'Total Inspections': inspections,
+          'Total Activities': cleanings + inspections
+        };
+      });
+
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Statistics');
+      XLSX.writeFile(wb, `PPE_Statistics_${new Date().toISOString().split('T')[0]}.xlsx`);
+      showToast('Statistics exported successfully');
+    }
+
+    function exportLogsToExcel() {
+      const data = [];
+      items.forEach(item => {
+        if (item.activities && item.activities.length > 0) {
+          item.activities.forEach(activity => {
+            data.push({
+              'Firefighter Name': item.name,
+              'Item Type': item.type,
+              'Serial Number': item.serial,
+              'Model': item.model || 'N/A',
+              'Date': activity.date,
+              'Advanced Cleaning': activity.cleaning ? 'Yes' : 'No',
+              'Advanced Inspection': activity.inspection ? 'Yes' : 'No'
+            });
+          });
+        } else {
+          data.push({
+            'Firefighter Name': item.name,
+            'Item Type': item.type,
+            'Serial Number': item.serial,
+            'Model': item.model || 'N/A',
+            'Date': 'No activities',
+            'Advanced Cleaning': 'No',
+            'Advanced Inspection': 'No'
+          });
+        }
+      });
+
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Activity Logs');
+      XLSX.writeFile(wb, `PPE_Logs_${new Date().toISOString().split('T')[0]}.xlsx`);
+      showToast('Logs exported successfully');
+    }
+
+    // ================================
+    // Firebase Functions
+    // ================================
+    function updateSyncStatus(status) {
+      const statusColors = {
+        'Synced': 'bg-green-600',
+        'Syncing...': 'bg-yellow-600',
+        'Not Synced': 'bg-red-600'
+      };
+      syncStatus.textContent = status;
+      syncStatus.className = `text-sm px-3 py-1 rounded ${statusColors[status] || 'bg-gray-700'}`;
+    }
+
+    async function saveToFirebase() {
+      updateSyncStatus('Syncing...');
+      try {
+        await fetch(DB_URL, { method: 'PUT', body: JSON.stringify(items) });
+        updateSyncStatus('Synced');
+      } catch (err) {
+        console.error(err);
+        updateSyncStatus('Not Synced');
+      }
+    }
+
+    async function saveToFirebaseWithFeedback() {
+      updateSyncStatus('Syncing...');
+      try {
+        await fetch(DB_URL, { method: 'PUT', body: JSON.stringify(items) });
+        updateSyncStatus('Synced');
+        showToast('Record saved and synced successfully', 'success');
+      } catch (err) {
+        console.error(err);
+        updateSyncStatus('Not Synced');
+        showToast('Record saved locally but failed to sync', 'warning');
+      }
+    }
+
+    async function syncData() {
+      try {
+        const res = await fetch(DB_URL);
+        const data = await res.json();
+        items = data || [];
+        updateSyncStatus('Synced');
+      } catch (err) {
+        updateSyncStatus('Not Synced');
+      }
+    }
+
+    // Continuous sync - checks every 3 seconds without showing "Syncing..." state
+    async function continuousSync() {
+      try {
+        const res = await fetch(DB_URL);
+        const data = await res.json();
+        const newItems = data || [];
+        
+        // Only update items if we're not currently on a page that could be affected
+        // This prevents overwriting data while user is actively working
+        if (currentPage === 'search' && !selectedItem && searchResults.length === 0) {
+          items = newItems;
+        }
+        
+        // Only update to "Synced" if not already synced to avoid flicker
+        if (syncStatus.textContent !== 'Synced') {
+          updateSyncStatus('Synced');
+        }
+      } catch (err) {
+        updateSyncStatus('Not Synced');
+      }
+    }
+
+    setInterval(continuousSync, 3000);
+
+    // ================================
+    // Toast Notifications
+    // ================================
+    function showToast(msg, type = 'success') {
+      const div = document.createElement('div');
+      const isSuccess = type === 'success';
+      const borderColor = isSuccess ? 'border-green-600' : 'border-yellow-600';
+      const iconColor = isSuccess ? 'text-green-600' : 'text-yellow-600';
+      const icon = isSuccess 
+        ? '<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>'
+        : '<path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>';
+      
+      div.className = `toast bg-white border-l-4 ${borderColor} shadow-lg px-5 py-3 rounded`;
+      div.innerHTML = `
+        <div class="flex items-center gap-3">
+          <svg class="w-5 h-5 ${iconColor}" fill="currentColor" viewBox="0 0 20 20">
+            ${icon}
+          </svg>
+          <span class="text-gray-800 font-medium">${msg}</span>
+        </div>
+      `;
+      toastArea.appendChild(div);
+      setTimeout(() => div.remove(), 4000);
+    }
+
+    // ================================
+    // Initialize
+    // ================================
+    syncData();
+    document.querySelector('.nav-btn[data-page="search"]').classList.add('bg-blue-600');
+    renderPage();
+  </script>
+</body>
+</html>
