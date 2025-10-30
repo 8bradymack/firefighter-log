@@ -203,14 +203,14 @@
     const CONFIG_KEY = 'app_config_v1';
     
     // Environment Configuration - Replace these in production via GitHub Actions
-    // GitHub Repository Secrets: FIREBASE_URL and ADMIN_PASSWORD
+    // Values injected by GitHub Actions at build time
     const ENV_CONFIG = {
-      url: '{{FIREBASE_URL}}' || 'https://smcfire-ppe-log-default-rtdb.firebaseio.com/logs.json',
-      pass: '{{ADMIN_PASSWORD}}' || 'admin'
+      url: "{{FIREBASE_URL}}",
+      pass: "{{ADMIN_PASSWORD}}"
     };
-    
-    let DB_URL = ENV_CONFIG.url;
-    let ADMIN_PASSCODE = ENV_CONFIG.pass;
+
+    let DB_URL = ENV_CONFIG.url || "";
+    let ADMIN_PASSCODE = ENV_CONFIG.pass || "";
     
     let items = [];
     let currentPage = 'search';
