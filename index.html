@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Turnout Tracker – Advanced PPE Cleaning</title>
+  <title>Advanced Cleaning/Inspection Log</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -14,30 +14,56 @@
       from { transform: translateY(20px); opacity: 0; }
       to { transform: translateY(0); opacity: 1; }
     }
-    .nav-btn:not(.bg-blue-600):hover {
-      opacity: 0.8;
-    }
-    button:not(.nav-btn):hover {
-      opacity: 0.9;
-    }
+    .nav-btn:not(.bg-blue-600):hover { opacity: 0.8; }
+    button:not(.nav-btn):hover { opacity: 0.9; }
+    .modal { display: none; position: fixed; z-index: 100; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); }
+    .modal.active { display: flex; align-items: center; justify-content: center; }
+    .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #3b82f6; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
   </style>
 </head>
 
 <body class="bg-gray-50 min-h-screen flex flex-col">
+  <!-- Configuration Modal (First-time setup) -->
+  <div id="configModal" class="modal">
+    <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+      <h3 class="text-xl font-bold mb-4 text-gray-800">System Configuration</h3>
+      <p class="text-sm text-gray-600 mb-4">Enter your database configuration to get started.</p>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Database URL</label>
+          <input type="text" id="configDbUrl" placeholder="https://your-database.com/api/logs.json"
+            class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Admin Passcode</label>
+          <input type="password" id="configAdminPass" placeholder="Enter admin passcode"
+            class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" />
+        </div>
+        <button id="saveConfig" class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition font-semibold">
+          Save Configuration
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Header -->
   <header class="bg-gray-800 text-white shadow-lg p-4">
     <div class="flex justify-between items-center mb-3">
       <div>
-        <h1 class="text-xl font-bold">Turnout Tracker</h1>
-        <p class="text-sm text-gray-300">Advanced Cleaning & PPE Inspection Log</p>
+        <h1 class="text-xl font-bold">Advanced Cleaning/Inspection Log</h1>
+        <p class="text-sm text-gray-300">PPE Tracking System</p>
       </div>
       <div class="flex items-center gap-3">
-        <span id="syncStatus" class="text-sm px-3 py-1 rounded bg-gray-700">Syncing...</span>
+        <span id="syncStatus" class="text-sm px-3 py-1 rounded bg-gray-700">Initializing...</span>
+        <button id="adminToggle" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition font-semibold">
+          Admin
+        </button>
       </div>
     </div>
     
     <!-- Navigation -->
-    <div class="flex gap-2">
+    <div class="flex gap-2" id="navButtons">
       <button class="nav-btn bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition" data-page="search">Search</button>
       <button class="nav-btn bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition" data-page="add">Add Item</button>
       <button class="nav-btn bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition" data-page="stats">Logs & Stats</button>
@@ -50,16 +76,270 @@
   <!-- Toast Notifications -->
   <div id="toast-area" class="fixed right-6 bottom-6 space-y-2 z-50"></div>
 
+  <!-- Admin Passcode Modal -->
+  <div id="adminModal" class="modal">
+    <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+      <h3 class="text-xl font-bold mb-4 text-gray-800">Admin Access</h3>
+      <input type="password" id="adminPassInput" placeholder="Enter admin passcode"
+        class="border border-gray-300 rounded-lg w-full p-3 mb-4 focus:border-blue-500 focus:outline-none" />
+      <div class="flex gap-3">
+        <button id="cancelAdmin" class="flex-1 bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition">Cancel</button>
+        <button id="submitAdmin" class="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Item Modal -->
+  <div id="editModal" class="modal">
+    <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-auto">
+      <h3 class="text-xl font-bold mb-4 text-gray-800">Edit Item Information</h3>
+      <form id="editForm" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Firefighter Name <span class="text-red-500">*</span></label>
+          <input name="name" type="text" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Serial Number <span class="text-red-500">*</span></label>
+          <input name="serial" type="text" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Item Type <span class="text-red-500">*</span></label>
+          <select name="type" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" required>
+            <option value="Helmet">Helmet</option>
+            <option value="Hood">Hood</option>
+            <option value="Gloves">Gloves</option>
+            <option value="Coat">Coat</option>
+            <option value="Pants">Pants</option>
+            <option value="Boots">Boots</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Model Number</label>
+          <input name="model" type="text" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Manufacture Date</label>
+          <input name="manufactureDate" type="date" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" />
+        </div>
+        <div class="flex gap-3 pt-4">
+          <button type="button" id="cancelEdit" class="flex-1 bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition">Cancel</button>
+          <button type="submit" class="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit Log Modal -->
+  <div id="editLogModal" class="modal">
+    <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-auto">
+      <h3 class="text-xl font-bold mb-4 text-gray-800">Edit Log Entry</h3>
+      <form id="editLogForm" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Firefighter Name <span class="text-red-500">*</span></label>
+          <input name="name" type="text" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Serial Number <span class="text-red-500">*</span></label>
+          <input name="serial" type="text" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" required />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Item Type <span class="text-red-500">*</span></label>
+          <select name="type" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" required>
+            <option value="Helmet">Helmet</option>
+            <option value="Hood">Hood</option>
+            <option value="Gloves">Gloves</option>
+            <option value="Coat">Coat</option>
+            <option value="Pants">Pants</option>
+            <option value="Boots">Boots</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Model Number</label>
+          <input name="model" type="text" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Date <span class="text-red-500">*</span></label>
+          <input name="date" type="date" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none" required />
+        </div>
+        <div class="space-y-2">
+          <label class="flex items-center space-x-3 cursor-pointer">
+            <input type="checkbox" name="cleaning" class="w-5 h-5" />
+            <span class="text-gray-700">Advanced Cleaning</span>
+          </label>
+          <label class="flex items-center space-x-3 cursor-pointer">
+            <input type="checkbox" name="inspection" class="w-5 h-5" />
+            <span class="text-gray-700">Advanced Inspection</span>
+          </label>
+        </div>
+        <div class="flex gap-3 pt-4">
+          <button type="button" id="cancelEditLog" class="flex-1 bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition">Cancel</button>
+          <button type="submit" class="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete Item Modal -->
+  <div id="deleteItemModal" class="modal">
+    <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+      <h3 class="text-xl font-bold mb-4 text-gray-800">Delete Item</h3>
+      <p class="text-gray-600 mb-6">What would you like to delete?</p>
+      <div class="space-y-3">
+        <button id="deleteItemOnly" class="w-full bg-orange-600 text-white px-4 py-3 rounded-lg hover:bg-orange-700 transition font-semibold">
+          Delete Item Only (Keep Logs)
+        </button>
+        <button id="deleteItemAndLogs" class="w-full bg-red-600 text-white px-4 py-3 rounded-lg hover:bg-red-700 transition font-semibold">
+          Delete Item AND All Logs
+        </button>
+        <button id="cancelDeleteItem" class="w-full bg-gray-600 text-white px-4 py-3 rounded-lg hover:bg-gray-700 transition font-semibold">
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script>
-    const DB_URL = 'https://tpusa-chatgpt-edition-default-rtdb.firebaseio.com/logs.json';
+    // Configuration Management
+    const CONFIG_KEY = 'app_config_v1';
+    
+    // Environment Configuration - Replace these in production via GitHub Actions
+    // GitHub Repository Secrets: FIREBASE_URL and ADMIN_PASSWORD
+    const ENV_CONFIG = {
+      url: '{{FIREBASE_URL}}' || 'https://smcfire-ppe-log-default-rtdb.firebaseio.com/logs.json',
+      pass: '{{ADMIN_PASSWORD}}' || 'admin'
+    };
+    
+    let DB_URL = ENV_CONFIG.url;
+    let ADMIN_PASSCODE = ENV_CONFIG.pass;
     
     let items = [];
     let currentPage = 'search';
     let selectedItem = null;
     let searchResults = [];
+    let editingItem = null;
+    let pendingEditData = null;
+    let deletingItem = null;
+    let editingLog = null;
+    let isAdminMode = false;
+    let isMultiSelectMode = false;
+    let syncInterval = null;
+    
     const main = document.getElementById('main-content');
     const toastArea = document.getElementById('toast-area');
     const syncStatus = document.getElementById('syncStatus');
+    const adminModal = document.getElementById('adminModal');
+    const editModal = document.getElementById('editModal');
+    const editLogModal = document.getElementById('editLogModal');
+    const deleteItemModal = document.getElementById('deleteItemModal');
+    const configModal = document.getElementById('configModal');
+    const adminToggle = document.getElementById('adminToggle');
+    const navButtons = document.getElementById('navButtons');
+
+    // Configuration Functions
+    function loadConfig() {
+      // First check if environment variables are set (from GitHub Actions)
+      if (ENV_CONFIG.url && ENV_CONFIG.url !== '{{FIREBASE_URL}}' && 
+          ENV_CONFIG.pass && ENV_CONFIG.pass !== '{{ADMIN_PASSWORD}}') {
+        DB_URL = ENV_CONFIG.url;
+        ADMIN_PASSCODE = ENV_CONFIG.pass;
+        return true;
+      }
+      
+      // Otherwise try to load from localStorage
+      try {
+        const config = JSON.parse(atob(localStorage.getItem(CONFIG_KEY) || ''));
+        DB_URL = config.db || '';
+        ADMIN_PASSCODE = config.pass || '';
+        return !!(DB_URL && ADMIN_PASSCODE);
+      } catch {
+        return false;
+      }
+    }
+
+    function saveConfig(dbUrl, adminPass) {
+      const config = { db: dbUrl, pass: adminPass };
+      localStorage.setItem(CONFIG_KEY, btoa(JSON.stringify(config)));
+      DB_URL = dbUrl;
+      ADMIN_PASSCODE = adminPass;
+    }
+
+    // Configuration Modal
+    document.getElementById('saveConfig').addEventListener('click', () => {
+      const dbUrl = document.getElementById('configDbUrl').value.trim();
+      const adminPass = document.getElementById('configAdminPass').value.trim();
+      
+      if (!dbUrl || !adminPass) {
+        showToast('Please fill in all fields', 'warning');
+        return;
+      }
+      
+      saveConfig(dbUrl, adminPass);
+      configModal.classList.remove('active');
+      showToast('Configuration saved successfully', 'success');
+      initialize();
+    });
+
+    // Update navigation highlighting
+    function updateNavHighlight() {
+      document.querySelectorAll('.nav-btn').forEach(btn => {
+        if (btn.dataset.page === currentPage) {
+          btn.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+          btn.classList.add('bg-blue-600');
+        } else {
+          btn.classList.remove('bg-blue-600');
+          btn.classList.add('bg-gray-700', 'hover:bg-gray-600');
+        }
+      });
+    }
+
+    // Update admin navigation
+    function updateAdminNav() {
+      const existingAdminBtn = document.querySelector('.nav-btn[data-page="items"]');
+      if (isAdminMode && !existingAdminBtn) {
+        const itemsBtn = document.createElement('button');
+        itemsBtn.className = 'nav-btn bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition';
+        itemsBtn.dataset.page = 'items';
+        itemsBtn.textContent = 'All Items';
+        itemsBtn.addEventListener('click', () => {
+          currentPage = 'items';
+          selectedItem = null;
+          searchResults = [];
+          updateNavHighlight();
+          renderPage();
+        });
+        navButtons.appendChild(itemsBtn);
+      } else if (!isAdminMode && existingAdminBtn) {
+        existingAdminBtn.remove();
+        if (currentPage === 'items') {
+          currentPage = 'search';
+        }
+      }
+      updateNavHighlight();
+    }
+
+    // Admin Toggle
+    adminToggle.addEventListener('click', () => {
+      if (isAdminMode) {
+        isAdminMode = false;
+        updateAdminUI();
+        updateAdminNav();
+        showToast('Signed out of admin mode', 'success');
+        renderPage();
+      } else {
+        adminModal.classList.add('active');
+        setTimeout(() => document.getElementById('adminPassInput').focus(), 100);
+      }
+    });
+
+    function updateAdminUI() {
+      if (isAdminMode) {
+        adminToggle.className = 'bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded transition font-bold';
+        adminToggle.innerHTML = 'Admin Sign Out';
+      } else {
+        adminToggle.className = 'bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded transition font-semibold';
+        adminToggle.innerHTML = 'Admin';
+      }
+    }
 
     // Navigation
     document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -67,15 +347,220 @@
         currentPage = btn.dataset.page;
         selectedItem = null;
         searchResults = [];
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('bg-blue-600'));
-        btn.classList.add('bg-blue-600');
+        isMultiSelectMode = false;
+        updateNavHighlight();
         renderPage();
       });
     });
 
-    // ================================
+    // Admin Modal
+    document.getElementById('cancelAdmin').addEventListener('click', () => {
+      adminModal.classList.remove('active');
+      document.getElementById('adminPassInput').value = '';
+    });
+
+    document.getElementById('submitAdmin').addEventListener('click', () => {
+      const pass = document.getElementById('adminPassInput').value;
+      if (pass === ADMIN_PASSCODE) {
+        adminModal.classList.remove('active');
+        document.getElementById('adminPassInput').value = '';
+        isAdminMode = true;
+        updateAdminUI();
+        updateAdminNav();
+        showToast('Admin mode activated', 'success');
+        renderPage();
+      } else {
+        showToast('Incorrect passcode', 'warning');
+      }
+    });
+
+    document.getElementById('adminPassInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('submitAdmin').click();
+      }
+    });
+
+    // Edit Modal
+    document.getElementById('cancelEdit').addEventListener('click', () => {
+      editModal.classList.remove('active');
+      editingItem = null;
+      pendingEditData = null;
+    });
+
+    document.getElementById('editForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      
+      if (!confirm('Are you sure you want to edit this item? This will apply to future logs only.')) {
+        return;
+      }
+      
+      const form = e.target;
+      
+      pendingEditData = {
+        name: form.name.value.trim(),
+        serial: form.serial.value.trim(),
+        type: form.type.value,
+        model: form.model.value.trim() || '',
+        manufactureDate: form.manufactureDate.value || ''
+      };
+      
+      editModal.classList.remove('active');
+      
+      if (editingItem.activities && editingItem.activities.length > 0) {
+        editingItem.activities.forEach(activity => {
+          if (!activity.snapshotName) {
+            activity.snapshotName = editingItem.name;
+            activity.snapshotSerial = editingItem.serial;
+            activity.snapshotType = editingItem.type;
+            activity.snapshotModel = editingItem.model;
+          }
+        });
+      }
+      
+      editingItem.name = pendingEditData.name;
+      editingItem.serial = pendingEditData.serial;
+      editingItem.type = pendingEditData.type;
+      editingItem.model = pendingEditData.model;
+      editingItem.manufactureDate = pendingEditData.manufactureDate;
+      
+      const itemIndex = items.findIndex(item => item.id === editingItem.id);
+      if (itemIndex !== -1) {
+        items[itemIndex] = editingItem;
+      }
+      
+      saveToCloudWithFeedback();
+      
+      if (selectedItem && selectedItem.id === editingItem.id) {
+        selectedItem = editingItem;
+      }
+      editingItem = null;
+      pendingEditData = null;
+      renderPage();
+      showToast('Item updated (future logs only)', 'success');
+    });
+
+    // Edit Log Modal
+    document.getElementById('cancelEditLog').addEventListener('click', () => {
+      editLogModal.classList.remove('active');
+      editingLog = null;
+    });
+
+    document.getElementById('editLogForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      
+      if (!editingLog) return;
+      
+      const form = e.target;
+      const item = items.find(i => i.id === editingLog.itemId);
+      
+      if (!item) return;
+      
+      const activityIndex = item.activities.findIndex(a => a.timestamp === editingLog.timestamp);
+      
+      if (activityIndex !== -1) {
+        const dateValue = form.date.value;
+        const dateObj = new Date(dateValue + 'T00:00:00');
+        const newTimestamp = dateObj.getTime();
+        
+        item.activities[activityIndex] = {
+          ...item.activities[activityIndex],
+          snapshotName: form.name.value.trim(),
+          snapshotSerial: form.serial.value.trim(),
+          snapshotType: form.type.value,
+          snapshotModel: form.model.value.trim() || '',
+          date: dateObj.toLocaleDateString(),
+          timestamp: newTimestamp,
+          cleaning: form.cleaning.checked,
+          inspection: form.inspection.checked
+        };
+        
+        saveToCloudWithFeedback();
+        editLogModal.classList.remove('active');
+        editingLog = null;
+        renderPage();
+        showToast('Log entry updated successfully', 'success');
+      }
+    });
+
+    function openEditModal(item) {
+      editingItem = item;
+      const form = document.getElementById('editForm');
+      form.name.value = item.name;
+      form.serial.value = item.serial;
+      form.type.value = item.type;
+      form.model.value = item.model || '';
+      form.manufactureDate.value = item.manufactureDate || '';
+      editModal.classList.add('active');
+    }
+
+    function openEditLogModal(log) {
+      editingLog = log;
+      const form = document.getElementById('editLogForm');
+      
+      const dateParts = log.date.split('/');
+      let dateValue = '';
+      if (dateParts.length === 3) {
+        const month = dateParts[0].padStart(2, '0');
+        const day = dateParts[1].padStart(2, '0');
+        const year = dateParts[2];
+        dateValue = `${year}-${month}-${day}`;
+      }
+      
+      form.name.value = log.name;
+      form.serial.value = log.serial;
+      form.type.value = log.type;
+      form.model.value = log.model || '';
+      form.date.value = dateValue;
+      form.cleaning.checked = log.cleaning;
+      form.inspection.checked = log.inspection;
+      editLogModal.classList.add('active');
+    }
+
+    // Delete Item Modal
+    document.getElementById('cancelDeleteItem').addEventListener('click', () => {
+      deleteItemModal.classList.remove('active');
+      deletingItem = null;
+    });
+
+    document.getElementById('deleteItemOnly').addEventListener('click', () => {
+      if (deletingItem) {
+        const itemIndex = items.findIndex(item => item.id === deletingItem.id);
+        if (itemIndex !== -1) {
+          items.splice(itemIndex, 1);
+          saveToCloudWithFeedback();
+          showToast('Item deleted (logs preserved)', 'success');
+          deleteItemModal.classList.remove('active');
+          deletingItem = null;
+          selectedItem = null;
+          searchResults = [];
+          renderPage();
+        }
+      }
+    });
+
+    document.getElementById('deleteItemAndLogs').addEventListener('click', () => {
+      if (deletingItem) {
+        const itemIndex = items.findIndex(item => item.id === deletingItem.id);
+        if (itemIndex !== -1) {
+          items.splice(itemIndex, 1);
+          saveToCloudWithFeedback();
+          showToast('Item and all logs deleted', 'success');
+          deleteItemModal.classList.remove('active');
+          deletingItem = null;
+          selectedItem = null;
+          searchResults = [];
+          renderPage();
+        }
+      }
+    });
+
+    function openDeleteItemModal(item) {
+      deletingItem = item;
+      deleteItemModal.classList.add('active');
+    }
+
     // Render Pages
-    // ================================
     function renderPage() {
       switch (currentPage) {
         case 'add':
@@ -84,12 +569,15 @@
         case 'stats':
           renderStatsPage();
           break;
+        case 'items':
+          renderItemsPage();
+          break;
         default:
           renderSearchPage();
       }
     }
 
-    // --------------------- Search Page
+    // Search Page
     function renderSearchPage() {
       if (selectedItem) {
         renderLogActivityPage();
@@ -123,14 +611,23 @@
           item.serial.toLowerCase().includes(term)
         );
         
+        isMultiSelectMode = false;
         renderSearchResults();
       });
     }
 
     function renderSearchResults() {
+      if (isMultiSelectMode) {
+        renderMultiSelectMode();
+        return;
+      }
+
       main.innerHTML = `
         <div class="max-w-3xl mx-auto">
-          <h2 class="text-2xl font-bold mb-6 text-gray-800">Select an Item</h2>
+          <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold text-gray-800">Select an Item</h2>
+            <button id="multiSelectBtn" class="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700 transition font-semibold">Select Multiple</button>
+          </div>
           <div id="results" class="space-y-3 mb-6"></div>
           <button id="backBtn" class="bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition">Back to Search</button>
         </div>
@@ -149,8 +646,7 @@
         document.getElementById('addNewItemBtn').addEventListener('click', () => {
           searchResults = [];
           currentPage = 'add';
-          document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('bg-blue-600'));
-          document.querySelector('.nav-btn[data-page="add"]').classList.add('bg-blue-600');
+          updateNavHighlight();
           renderPage();
         });
       } else {
@@ -177,15 +673,164 @@
         searchResults = [];
         renderSearchPage();
       });
+
+      document.getElementById('multiSelectBtn').addEventListener('click', () => {
+        isMultiSelectMode = true;
+        renderMultiSelectMode();
+      });
+    }
+
+    function renderMultiSelectMode() {
+      let selectedItemIds = new Set();
+
+      main.innerHTML = `
+        <div class="max-w-3xl mx-auto">
+          <div class="flex justify-between items-center mb-6">
+            <div class="flex items-center gap-3">
+              <h2 class="text-2xl font-bold text-gray-800">Select Multiple Items</h2>
+              <span id="selectedCount" class="text-sm text-gray-600 bg-blue-100 px-3 py-1 rounded-full">0 items selected</span>
+            </div>
+            <button id="cancelMultiTop" class="bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition font-semibold">Cancel</button>
+          </div>
+          <div id="multiResults" class="space-y-3 mb-6"></div>
+          
+          <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+            <label class="block text-sm font-medium text-gray-700 mb-3">Select Activity for All Selected Items</label>
+            <div class="space-y-2 mb-4">
+              <label class="flex items-center space-x-3 cursor-pointer">
+                <input type="checkbox" id="multiCleaning" class="w-5 h-5" />
+                <span class="text-gray-700">Advanced Cleaning</span>
+              </label>
+              <label class="flex items-center space-x-3 cursor-pointer">
+                <input type="checkbox" id="multiInspection" class="w-5 h-5" />
+                <span class="text-gray-700">Advanced Inspection</span>
+              </label>
+            </div>
+            <div class="flex gap-3">
+              <button id="cancelMulti" class="flex-1 bg-gray-600 text-white px-6 py-3 rounded-lg hover:bg-gray-700 transition font-semibold">Cancel</button>
+              <button id="submitMulti" class="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-semibold">Log Activities</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      function renderMultiList() {
+        const multiResults = document.getElementById('multiResults');
+        const selectedCount = document.getElementById('selectedCount');
+        
+        multiResults.innerHTML = searchResults.map((item) => {
+          const isSelected = selectedItemIds.has(item.id);
+          return `
+            <label class="flex items-center space-x-3 p-4 border rounded-lg cursor-pointer hover:bg-gray-50 ${isSelected ? 'bg-blue-50 border-blue-400' : 'border-gray-200'}">
+              <input type="checkbox" class="w-5 h-5 multi-checkbox" data-id="${item.id}" ${isSelected ? 'checked' : ''} />
+              <div class="flex-1">
+                <div class="font-semibold text-lg text-gray-800">${item.name}</div>
+                <div class="grid grid-cols-3 gap-2 mt-2 text-sm">
+                  <div><span class="text-gray-500">Serial:</span> <span class="font-medium">${item.serial}</span></div>
+                  <div><span class="text-gray-500">Type:</span> <span class="font-medium">${item.type}</span></div>
+                  <div><span class="text-gray-500">Model:</span> <span class="font-medium">${item.model || 'N/A'}</span></div>
+                </div>
+              </div>
+            </label>
+          `;
+        }).join('');
+
+        selectedCount.textContent = `${selectedItemIds.size} items selected`;
+
+        document.querySelectorAll('.multi-checkbox').forEach(checkbox => {
+          checkbox.addEventListener('change', (e) => {
+            const itemId = e.target.dataset.id;
+            if (e.target.checked) {
+              selectedItemIds.add(itemId);
+            } else {
+              selectedItemIds.delete(itemId);
+            }
+            renderMultiList();
+          });
+        });
+      }
+
+      renderMultiList();
+
+      document.getElementById('cancelMultiTop').addEventListener('click', () => {
+        isMultiSelectMode = false;
+        renderSearchResults();
+      });
+
+      document.getElementById('cancelMulti').addEventListener('click', () => {
+        isMultiSelectMode = false;
+        renderSearchResults();
+      });
+
+      document.getElementById('submitMulti').addEventListener('click', () => {
+        const cleaning = document.getElementById('multiCleaning').checked;
+        const inspection = document.getElementById('multiInspection').checked;
+
+        if (selectedItemIds.size === 0) {
+          showToast('Please select at least one item', 'warning');
+          return;
+        }
+
+        if (!cleaning && !inspection) {
+          showToast('Please select at least one activity', 'warning');
+          return;
+        }
+
+        const activity = {
+          date: new Date().toLocaleDateString(),
+          timestamp: Date.now(),
+          cleaning: cleaning,
+          inspection: inspection
+        };
+
+        let updateCount = 0;
+        selectedItemIds.forEach(itemId => {
+          const item = items.find(i => i.id === itemId);
+          if (item) {
+            if (!item.activities) {
+              item.activities = [];
+            }
+            
+            item.activities.push({
+              ...activity,
+              snapshotName: item.name,
+              snapshotSerial: item.serial,
+              snapshotType: item.type,
+              snapshotModel: item.model
+            });
+            
+            updateCount++;
+          }
+        });
+
+        saveToCloudWithFeedback();
+        showToast(`Activity logged for ${updateCount} items`, 'success');
+        
+        searchResults = [];
+        isMultiSelectMode = false;
+        renderSearchPage();
+      });
     }
 
     function renderLogActivityPage() {
       const lastCleaned = getLastActivity(selectedItem, 'cleaning');
       const lastInspected = getLastActivity(selectedItem, 'inspection');
 
+      const adminButtons = isAdminMode ? `
+        <div class="flex gap-2">
+          <button id="editBtn" class="text-blue-600 underline hover:text-blue-700 font-medium">Edit</button>
+          <button id="deleteItemBtn" class="text-red-600 underline hover:text-red-700 font-medium">Delete Item</button>
+        </div>
+      ` : `
+        <button id="editBtn" class="text-blue-600 underline hover:text-blue-700 font-medium">Edit</button>
+      `;
+
       main.innerHTML = `
         <div class="max-w-2xl mx-auto">
-          <h2 class="text-3xl font-bold mb-6 text-gray-800">Log Activity</h2>
+          <div class="flex justify-between items-start mb-6">
+            <h2 class="text-3xl font-bold text-gray-800">Log Activity</h2>
+            ${adminButtons}
+          </div>
           <div class="bg-white p-6 rounded-lg shadow-md space-y-4">
             <div>
               <label class="block text-sm font-medium text-gray-500 mb-1">Firefighter</label>
@@ -235,6 +880,16 @@
         </div>
       `;
 
+      document.getElementById('editBtn').addEventListener('click', () => {
+        openEditModal(selectedItem);
+      });
+
+      if (isAdminMode) {
+        document.getElementById('deleteItemBtn').addEventListener('click', () => {
+          openDeleteItemModal(selectedItem);
+        });
+      }
+
       document.getElementById('cancelBtn').addEventListener('click', () => {
         selectedItem = null;
         renderSearchResults();
@@ -259,24 +914,26 @@
           date: new Date().toLocaleDateString(),
           timestamp: Date.now(),
           cleaning: cleaning,
-          inspection: inspection
+          inspection: inspection,
+          snapshotName: selectedItem.name,
+          snapshotSerial: selectedItem.serial,
+          snapshotType: selectedItem.type,
+          snapshotModel: selectedItem.model
         };
 
         selectedItem.activities.push(activity);
         
-        // Find and update the actual item in the items array
         const itemIndex = items.findIndex(item => item.id === selectedItem.id);
         if (itemIndex !== -1) {
           items[itemIndex] = selectedItem;
         }
         
-        saveToFirebaseWithFeedback();
+        saveToCloudWithFeedback();
         
         selectedItem = null;
         searchResults = [];
         currentPage = 'search';
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('bg-blue-600'));
-        document.querySelector('.nav-btn[data-page="search"]').classList.add('bg-blue-600');
+        updateNavHighlight();
         renderSearchPage();
       });
     }
@@ -293,7 +950,7 @@
       return last.date;
     }
 
-    // --------------------- Add Item
+    // Add Item Page
     function renderAddPage() {
       main.innerHTML = `
         <div class="max-w-2xl mx-auto">
@@ -310,13 +967,13 @@
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">Item Type <span class="text-red-500">*</span></label>
               <select name="type" class="border border-gray-300 rounded-lg w-full p-3 focus:border-blue-500 focus:outline-none bg-white text-gray-800" required>
-                <option value="" class="text-gray-800">Select item type</option>
-                <option value="Helmet" class="text-gray-800">Helmet</option>
-                <option value="Coat" class="text-gray-800">Coat</option>
-                <option value="Pants" class="text-gray-800">Pants</option>
-                <option value="Boots" class="text-gray-800">Boots</option>
-                <option value="Gloves" class="text-gray-800">Gloves</option>
-                <option value="Hood" class="text-gray-800">Hood</option>
+                <option value="">Select item type</option>
+                <option value="Helmet">Helmet</option>
+                <option value="Hood">Hood</option>
+                <option value="Gloves">Gloves</option>
+                <option value="Coat">Coat</option>
+                <option value="Pants">Pants</option>
+                <option value="Boots">Boots</option>
               </select>
             </div>
             <div>
@@ -352,8 +1009,7 @@
 
       document.getElementById('cancelAddBtn').addEventListener('click', () => {
         currentPage = 'search';
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('bg-blue-600'));
-        document.querySelector('.nav-btn[data-page="search"]').classList.add('bg-blue-600');
+        updateNavHighlight();
         renderPage();
       });
 
@@ -372,50 +1028,171 @@
           createdAt: Date.now()
         };
 
-        // Add initial activity if selected
         if (form.cleaning.checked || form.inspection.checked) {
           newItem.activities.push({
             date: new Date().toLocaleDateString(),
             timestamp: Date.now(),
             cleaning: form.cleaning.checked,
-            inspection: form.inspection.checked
+            inspection: form.inspection.checked,
+            snapshotName: newItem.name,
+            snapshotSerial: newItem.serial,
+            snapshotType: newItem.type,
+            snapshotModel: newItem.model
           });
         }
 
         items.push(newItem);
         form.reset();
-        saveToFirebaseWithFeedback();
+        saveToCloudWithFeedback();
         
-        // Go back to search page
         currentPage = 'search';
         searchResults = [];
         selectedItem = null;
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('bg-blue-600'));
-        document.querySelector('.nav-btn[data-page="search"]').classList.add('bg-blue-600');
+        updateNavHighlight();
         renderSearchPage();
       });
     }
 
-    // --------------------- Stats & Logs Page
+    // All Items Page (Admin Only)
+    function renderItemsPage() {
+      if (!isAdminMode) {
+        currentPage = 'search';
+        updateNavHighlight();
+        renderSearchPage();
+        return;
+      }
+
+      main.innerHTML = `
+        <div class="max-w-7xl mx-auto">
+          <div class="flex justify-between items-center mb-6">
+            <h2 class="text-3xl font-bold text-gray-800">All Items</h2>
+            <div class="flex items-center gap-4">
+              <input type="text" id="itemsSearchInput" placeholder="Search items..." 
+                class="border-2 border-gray-300 rounded-lg px-4 py-2 focus:border-blue-500 focus:outline-none" />
+              <div class="text-sm text-gray-600">Total: <span id="itemCount">${items.length}</span> items</div>
+            </div>
+          </div>
+          
+          <div class="bg-white rounded-lg shadow-md overflow-auto">
+            <table class="min-w-full text-sm">
+              <thead class="bg-gray-100 text-left">
+                <tr>
+                  <th class="p-3 font-semibold">Name</th>
+                  <th class="p-3 font-semibold">Type</th>
+                  <th class="p-3 font-semibold">Serial</th>
+                  <th class="p-3 font-semibold">Model</th>
+                  <th class="p-3 font-semibold">Manufacture Date</th>
+                  <th class="p-3 font-semibold text-center">Total Activities</th>
+                  <th class="p-3 font-semibold text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="itemsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      `;
+
+      function renderItemsTable(filteredItems) {
+        const itemsBody = document.getElementById('itemsBody');
+        const itemCount = document.getElementById('itemCount');
+        
+        const sortedItems = [...filteredItems].sort((a, b) => a.name.localeCompare(b.name));
+        itemCount.textContent = sortedItems.length;
+        
+        itemsBody.innerHTML = sortedItems.map((item) => {
+          const totalActivities = item.activities ? item.activities.length : 0;
+          return `
+            <tr class="border-t hover:bg-gray-50">
+              <td class="p-3 font-medium">${item.name}</td>
+              <td class="p-3">${item.type}</td>
+              <td class="p-3">${item.serial}</td>
+              <td class="p-3">${item.model || 'N/A'}</td>
+              <td class="p-3">${item.manufactureDate || 'N/A'}</td>
+              <td class="p-3 text-center">${totalActivities}</td>
+              <td class="p-3 text-center">
+                <button class="edit-item-btn bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition text-xs font-semibold mr-2" data-id="${item.id}">Edit</button>
+                <button class="delete-item-btn bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700 transition text-xs font-semibold" data-id="${item.id}">Delete</button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+        document.querySelectorAll('.edit-item-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const item = items.find(i => i.id === btn.dataset.id);
+            if (item) openEditModal(item);
+          });
+        });
+
+        document.querySelectorAll('.delete-item-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const item = items.find(i => i.id === btn.dataset.id);
+            if (item) openDeleteItemModal(item);
+          });
+        });
+      }
+
+      renderItemsTable(items);
+
+      const searchInput = document.getElementById('itemsSearchInput');
+      searchInput.addEventListener('input', (e) => {
+        const searchTerm = e.target.value.toLowerCase().trim();
+        
+        if (!searchTerm) {
+          renderItemsTable(items);
+          return;
+        }
+
+        const filtered = items.filter(item =>
+          item.name.toLowerCase().includes(searchTerm) ||
+          item.type.toLowerCase().includes(searchTerm) ||
+          item.serial.toLowerCase().includes(searchTerm) ||
+          (item.model && item.model.toLowerCase().includes(searchTerm))
+        );
+
+        renderItemsTable(filtered);
+      });
+    }
+
+    // Stats & Logs Page
     function renderStatsPage() {
+      const exportButtons = isAdminMode 
+        ? `<button id="exportStats" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition">Export Stats</button>`
+        : '';
+
+      const deleteLogsButton = isAdminMode 
+        ? `<button id="deleteLogsBtn" class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition">Delete Logs</button>`
+        : '';
+
+      const searchBar = isAdminMode
+        ? `<input type="text" id="logsSearchInput" placeholder="Search logs..." 
+            class="border-2 border-gray-300 rounded-lg px-4 py-2 focus:border-blue-500 focus:outline-none" />`
+        : '';
+
+      const exportLogsButton = isAdminMode
+        ? `<button id="exportLogs" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition">Export Logs</button>`
+        : '';
+
       main.innerHTML = `
         <div class="max-w-7xl mx-auto">
           <h2 class="text-3xl font-bold mb-6 text-gray-800">Statistics & Logs</h2>
           
-          <!-- Stats Section -->
           <div class="bg-white p-6 rounded-lg shadow-md mb-6">
             <div class="flex justify-between items-center mb-4">
               <h3 class="text-xl font-semibold text-gray-800">Activity Summary</h3>
-              <button id="exportStats" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition">Export Stats</button>
+              ${exportButtons}
             </div>
             <canvas id="chart" width="400" height="150"></canvas>
           </div>
 
-          <!-- Logs Section -->
           <div class="bg-white rounded-lg shadow-md">
             <div class="p-6 border-b flex justify-between items-center">
               <h3 class="text-xl font-semibold text-gray-800">All Activity Logs</h3>
-              <button id="exportLogs" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition">Export Logs</button>
+              <div class="flex gap-3 items-center">
+                ${searchBar}
+                ${exportLogsButton}
+                ${deleteLogsButton}
+              </div>
             </div>
             <div class="overflow-auto">
               <table class="min-w-full text-sm">
@@ -428,6 +1205,7 @@
                     <th class="p-3 font-semibold">Model</th>
                     <th class="p-3 font-semibold text-center">Cleaning</th>
                     <th class="p-3 font-semibold text-center">Inspection</th>
+                    ${isAdminMode ? '<th class="p-3 font-semibold text-center">Actions</th>' : ''}
                   </tr>
                 </thead>
                 <tbody id="logBody"></tbody>
@@ -437,12 +1215,8 @@
         </div>
       `;
 
-      // Render chart
       const ctx = document.getElementById('chart').getContext('2d');
-      const activityCounts = {
-        'Cleanings': 0,
-        'Inspections': 0
-      };
+      const activityCounts = { 'Cleanings': 0, 'Inspections': 0 };
       
       items.forEach(item => {
         if (item.activities) {
@@ -470,48 +1244,125 @@
         }
       });
 
-      // Render logs table - show ALL activities
       const logBody = document.getElementById('logBody');
       const allActivities = [];
       
-      // Collect all activities from all items
       items.forEach(item => {
         if (item.activities && item.activities.length > 0) {
           item.activities.forEach(activity => {
             allActivities.push({
               ...activity,
-              name: item.name,
-              type: item.type,
-              serial: item.serial,
-              model: item.model
+              itemId: item.id,
+              name: activity.snapshotName || item.name,
+              type: activity.snapshotType || item.type,
+              serial: activity.snapshotSerial || item.serial,
+              model: activity.snapshotModel || item.model
             });
           });
         }
       });
       
-      // Sort by timestamp (newest first)
       allActivities.sort((a, b) => b.timestamp - a.timestamp);
-      
-      logBody.innerHTML = allActivities.map(log => `
-        <tr class="border-t hover:bg-gray-50">
-          <td class="p-3">${log.date}</td>
-          <td class="p-3">${log.name}</td>
-          <td class="p-3">${log.type}</td>
-          <td class="p-3">${log.serial}</td>
-          <td class="p-3">${log.model || 'N/A'}</td>
-          <td class="p-3 text-center">${log.cleaning ? '<span class="text-green-600 font-bold">✓</span>' : '<span class="text-gray-400">—</span>'}</td>
-          <td class="p-3 text-center">${log.inspection ? '<span class="text-green-600 font-bold">✓</span>' : '<span class="text-gray-400">—</span>'}</td>
-        </tr>
-      `).join('');
 
-      // Export buttons
-      document.getElementById('exportStats').addEventListener('click', exportStatsToExcel);
-      document.getElementById('exportLogs').addEventListener('click', exportLogsToExcel);
+      function renderLogsTable(filteredActivities) {
+        logBody.innerHTML = filteredActivities.map((log) => {
+          const actionButtons = isAdminMode 
+            ? `<td class="p-3 text-center">
+                <button class="edit-log-btn bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition text-xs font-semibold mr-2" data-timestamp="${log.timestamp}" data-item-id="${log.itemId}">Edit</button>
+                <button class="delete-log-btn bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700 transition text-xs font-semibold" data-timestamp="${log.timestamp}" data-item-id="${log.itemId}">Delete</button>
+              </td>`
+            : '';
+          
+          return `
+            <tr class="border-t hover:bg-gray-50">
+              <td class="p-3">${log.date}</td>
+              <td class="p-3">${log.name}</td>
+              <td class="p-3">${log.type}</td>
+              <td class="p-3">${log.serial}</td>
+              <td class="p-3">${log.model || 'N/A'}</td>
+              <td class="p-3 text-center">${log.cleaning ? '<span class="text-green-600 font-bold">✓</span>' : '<span class="text-gray-400">—</span>'}</td>
+              <td class="p-3 text-center">${log.inspection ? '<span class="text-green-600 font-bold">✓</span>' : '<span class="text-gray-400">—</span>'}</td>
+              ${actionButtons}
+            </tr>
+          `;
+        }).join('');
+
+        if (isAdminMode) {
+          document.querySelectorAll('.edit-log-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const timestamp = parseInt(btn.dataset.timestamp);
+              const itemId = btn.dataset.itemId;
+              const logToEdit = filteredActivities.find(a => a.timestamp === timestamp && a.itemId === itemId);
+              
+              if (logToEdit) {
+                openEditLogModal(logToEdit);
+              }
+            });
+          });
+
+          document.querySelectorAll('.delete-log-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const timestamp = parseInt(btn.dataset.timestamp);
+              const itemId = btn.dataset.itemId;
+              const logToDelete = filteredActivities.find(a => a.timestamp === timestamp && a.itemId === itemId);
+              
+              if (confirm(`Are you sure you want to delete this log from ${logToDelete.date} for ${logToDelete.name}?`)) {
+                const item = items.find(i => i.id === itemId);
+                if (item && item.activities) {
+                  const activityIndex = item.activities.findIndex(a => a.timestamp === timestamp);
+                  if (activityIndex !== -1) {
+                    item.activities.splice(activityIndex, 1);
+                    saveToCloudWithFeedback();
+                    renderStatsPage();
+                    showToast('Log deleted successfully', 'success');
+                  }
+                }
+              }
+            });
+          });
+        }
+      }
+
+      renderLogsTable(allActivities);
+
+      if (isAdminMode) {
+        const searchInput = document.getElementById('logsSearchInput');
+        searchInput.addEventListener('input', (e) => {
+          const searchTerm = e.target.value.toLowerCase().trim();
+          
+          if (!searchTerm) {
+            renderLogsTable(allActivities);
+            return;
+          }
+
+          const filtered = allActivities.filter(log =>
+            log.name.toLowerCase().includes(searchTerm) ||
+            log.type.toLowerCase().includes(searchTerm) ||
+            log.serial.toLowerCase().includes(searchTerm) ||
+            (log.model && log.model.toLowerCase().includes(searchTerm)) ||
+            log.date.toLowerCase().includes(searchTerm)
+          );
+
+          renderLogsTable(filtered);
+        });
+
+        document.getElementById('deleteLogsBtn').addEventListener('click', () => {
+          if (confirm('Are you sure you want to delete ALL activity logs? This will remove all cleaning and inspection records but keep the items.')) {
+            items.forEach(item => {
+              item.activities = [];
+            });
+            saveToCloudWithFeedback();
+            renderStatsPage();
+            showToast('All logs deleted successfully', 'success');
+          }
+        });
+
+        document.getElementById('exportStats').addEventListener('click', exportStatsToExcel);
+        document.getElementById('exportLogs').addEventListener('click', exportLogsToExcel);
+      }
     }
 
-    // ================================
     // Excel Export Functions
-    // ================================
     function exportStatsToExcel() {
       const data = items.map(item => {
         const cleanings = item.activities ? item.activities.filter(a => a.cleaning).length : 0;
@@ -539,10 +1390,10 @@
         if (item.activities && item.activities.length > 0) {
           item.activities.forEach(activity => {
             data.push({
-              'Firefighter Name': item.name,
-              'Item Type': item.type,
-              'Serial Number': item.serial,
-              'Model': item.model || 'N/A',
+              'Firefighter Name': activity.snapshotName || item.name,
+              'Item Type': activity.snapshotType || item.type,
+              'Serial Number': activity.snapshotSerial || item.serial,
+              'Model': activity.snapshotModel || item.model || 'N/A',
               'Date': activity.date,
               'Advanced Cleaning': activity.cleaning ? 'Yes' : 'No',
               'Advanced Inspection': activity.inspection ? 'Yes' : 'No'
@@ -568,87 +1419,114 @@
       showToast('Logs exported successfully');
     }
 
-    // ================================
-    // Firebase Functions
-    // ================================
+    // Cloud Sync Functions
     function updateSyncStatus(status) {
       const statusColors = {
         'Synced': 'bg-green-600',
         'Syncing...': 'bg-yellow-600',
-        'Not Synced': 'bg-red-600'
+        'Not Synced': 'bg-red-600',
+        'Initializing...': 'bg-blue-600'
       };
       syncStatus.textContent = status;
       syncStatus.className = `text-sm px-3 py-1 rounded ${statusColors[status] || 'bg-gray-700'}`;
     }
 
-    async function saveToFirebase() {
+    async function saveToCloud() {
+      if (!DB_URL) return;
+      
       updateSyncStatus('Syncing...');
       try {
-        await fetch(DB_URL, { method: 'PUT', body: JSON.stringify(items) });
+        const response = await fetch(DB_URL, { 
+          method: 'PUT', 
+          body: JSON.stringify(items),
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         updateSyncStatus('Synced');
       } catch (err) {
-        console.error(err);
+        console.error('Save error:', err);
         updateSyncStatus('Not Synced');
       }
     }
 
-    async function saveToFirebaseWithFeedback() {
+    async function saveToCloudWithFeedback() {
+      if (!DB_URL) return;
+      
       updateSyncStatus('Syncing...');
       try {
-        await fetch(DB_URL, { method: 'PUT', body: JSON.stringify(items) });
+        const response = await fetch(DB_URL, { 
+          method: 'PUT', 
+          body: JSON.stringify(items),
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         updateSyncStatus('Synced');
         showToast('Record saved and synced successfully', 'success');
       } catch (err) {
-        console.error(err);
+        console.error('Save error:', err);
         updateSyncStatus('Not Synced');
         showToast('Record saved locally but failed to sync', 'warning');
       }
     }
 
     async function syncData() {
+      if (!DB_URL) return;
+      
       try {
         const res = await fetch(DB_URL);
+        
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        
         const data = await res.json();
         items = data || [];
         updateSyncStatus('Synced');
       } catch (err) {
+        console.error('Sync error:', err);
         updateSyncStatus('Not Synced');
       }
     }
 
-    // Continuous sync - checks every 3 seconds without showing "Syncing..." state
     async function continuousSync() {
+      if (!DB_URL) return;
+      
       try {
         const res = await fetch(DB_URL);
+        
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        
         const data = await res.json();
         const newItems = data || [];
         
-        // Only update items if we're not currently on a page that could be affected
-        // This prevents overwriting data while user is actively working
         if (currentPage === 'search' && !selectedItem && searchResults.length === 0) {
           items = newItems;
         }
         
-        // Only update to "Synced" if not already synced to avoid flicker
-        if (syncStatus.textContent !== 'Synced') {
-          updateSyncStatus('Synced');
-        }
+        updateSyncStatus('Synced');
       } catch (err) {
+        console.error('Continuous sync error:', err);
         updateSyncStatus('Not Synced');
       }
     }
 
-    setInterval(continuousSync, 3000);
-
-    // ================================
     // Toast Notifications
-    // ================================
     function showToast(msg, type = 'success') {
       const div = document.createElement('div');
       const isSuccess = type === 'success';
       const borderColor = isSuccess ? 'border-green-600' : 'border-yellow-600';
       const iconColor = isSuccess ? 'text-green-600' : 'text-yellow-600';
-      const icon = isSuccess 
+      const icon = isSuccess
         ? '<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>'
         : '<path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>';
       
@@ -665,12 +1543,30 @@
       setTimeout(() => div.remove(), 4000);
     }
 
-    // ================================
-    // Initialize
-    // ================================
-    syncData();
-    document.querySelector('.nav-btn[data-page="search"]').classList.add('bg-blue-600');
-    renderPage();
+    // Initialize Application
+    async function initialize() {
+      const hasConfig = loadConfig();
+      
+      if (!hasConfig) {
+        configModal.classList.add('active');
+        updateSyncStatus('Not Configured');
+        return;
+      }
+      
+      updateSyncStatus('Syncing...');
+      await syncData();
+      
+      if (syncInterval) {
+        clearInterval(syncInterval);
+      }
+      syncInterval = setInterval(continuousSync, 3000);
+      
+      updateNavHighlight();
+      renderPage();
+    }
+
+    // Start the application
+    initialize();
   </script>
 </body>
 </html>
