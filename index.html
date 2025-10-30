@@ -237,7 +237,7 @@
 
     // Configuration Functions
     function loadConfig() {
-      // First check if environment variables are set (from GitHub Actions)
+      // First priority: Check if environment variables are set (from GitHub Actions)
       if (ENV_CONFIG.url && ENV_CONFIG.url !== '{{FIREBASE_URL}}' && 
           ENV_CONFIG.pass && ENV_CONFIG.pass !== '{{ADMIN_PASSWORD}}') {
         DB_URL = ENV_CONFIG.url;
@@ -245,15 +245,25 @@
         return true;
       }
       
-      // Otherwise try to load from localStorage
+      // Second priority: Use hardcoded fallback values
+      if (ENV_CONFIG.url.includes('smcfire-ppe-log') && ENV_CONFIG.pass === 'admin') {
+        DB_URL = 'https://smcfire-ppe-log-default-rtdb.firebaseio.com/logs.json';
+        ADMIN_PASSCODE = 'admin';
+        return true;
+      }
+      
+      // Third priority: Try localStorage
       try {
         const config = JSON.parse(atob(localStorage.getItem(CONFIG_KEY) || ''));
         DB_URL = config.db || '';
         ADMIN_PASSCODE = config.pass || '';
-        return !!(DB_URL && ADMIN_PASSCODE);
-      } catch {
-        return false;
-      }
+        if (DB_URL && ADMIN_PASSCODE) return true;
+      } catch {}
+      
+      // Last resort: Use the fallback values directly from ENV_CONFIG
+      DB_URL = 'https://smcfire-ppe-log-default-rtdb.firebaseio.com/logs.json';
+      ADMIN_PASSCODE = 'admin';
+      return true;
     }
 
     function saveConfig(dbUrl, adminPass) {
@@ -825,6 +835,41 @@
         <button id="editBtn" class="text-blue-600 underline hover:text-blue-700 font-medium">Edit</button>
       `;
 
+      // Get past activities for this item
+      const pastActivities = selectedItem.activities && selectedItem.activities.length > 0
+        ? selectedItem.activities.sort((a, b) => b.timestamp - a.timestamp)
+        : [];
+
+      const activityHistoryHTML = pastActivities.length > 0 ? `
+        <div class="mt-6 pt-6 border-t">
+          <h3 class="text-lg font-semibold text-gray-800 mb-4">Activity History</h3>
+          <div class="space-y-2 max-h-64 overflow-y-auto">
+            ${pastActivities.map(activity => `
+              <div class="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                <div class="flex justify-between items-start">
+                  <div class="flex-1">
+                    <div class="text-sm font-medium text-gray-700">${activity.date}</div>
+                    <div class="text-xs text-gray-500 mt-1">
+                      ${activity.cleaning ? '<span class="inline-block bg-blue-100 text-blue-800 px-2 py-1 rounded mr-2">Cleaning</span>' : ''}
+                      ${activity.inspection ? '<span class="inline-block bg-green-100 text-green-800 px-2 py-1 rounded">Inspection</span>' : ''}
+                    </div>
+                    ${activity.snapshotName !== selectedItem.name || activity.snapshotSerial !== selectedItem.serial ? `
+                      <div class="text-xs text-gray-400 mt-1">
+                        Logged as: ${activity.snapshotName || 'N/A'} - ${activity.snapshotSerial || 'N/A'}
+                      </div>
+                    ` : ''}
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : `
+        <div class="mt-6 pt-6 border-t">
+          <p class="text-gray-500 text-center py-4">No activity history yet</p>
+        </div>
+      `;
+
       main.innerHTML = `
         <div class="max-w-2xl mx-auto">
           <div class="flex justify-between items-start mb-6">
@@ -876,6 +921,8 @@
                 <button type="submit" class="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-semibold">Submit Log</button>
               </div>
             </form>
+
+            ${activityHistoryHTML}
           </div>
         </div>
       `;
@@ -1425,6 +1472,8 @@
         'Synced': 'bg-green-600',
         'Syncing...': 'bg-yellow-600',
         'Not Synced': 'bg-red-600',
+        'Connection Failed': 'bg-red-600',
+        'Connecting...': 'bg-blue-600',
         'Initializing...': 'bg-blue-600'
       };
       syncStatus.textContent = status;
@@ -1545,24 +1594,30 @@
 
     // Initialize Application
     async function initialize() {
-      const hasConfig = loadConfig();
+      // Always load config (now always returns true with fallback)
+      loadConfig();
       
-      if (!hasConfig) {
-        configModal.classList.add('active');
-        updateSyncStatus('Not Configured');
-        return;
+      updateSyncStatus('Connecting...');
+      
+      try {
+        await syncData();
+        
+        if (syncInterval) {
+          clearInterval(syncInterval);
+        }
+        syncInterval = setInterval(continuousSync, 3000);
+        
+        updateNavHighlight();
+        renderPage();
+      } catch (error) {
+        console.error('Initialization error:', error);
+        updateSyncStatus('Connection Failed');
+        showToast('Unable to connect to database. Check your connection.', 'warning');
+        
+        // Still render the page so users can see the UI
+        updateNavHighlight();
+        renderPage();
       }
-      
-      updateSyncStatus('Syncing...');
-      await syncData();
-      
-      if (syncInterval) {
-        clearInterval(syncInterval);
-      }
-      syncInterval = setInterval(continuousSync, 3000);
-      
-      updateNavHighlight();
-      renderPage();
     }
 
     // Start the application
